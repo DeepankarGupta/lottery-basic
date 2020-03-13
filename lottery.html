@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Online Lottery</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+    integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/web3@1.2.6/dist/web3.min.js"></script>
+  <style>
+    input::-webkit-outer-spin-button,
+    input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    /* Firefox */
+    input[type=number] {
+      -moz-appearance: textfield;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app" class="container text-center pt-4">
+    <div class="row" style="font-size: 32px;">
+      <div class="col text-center">Welcome to Online Lottery</div>
+    </div>
+    <div class="row" style="font-size: 24px;">
+      <div class="col text-center">Powerd By Blockchain</div>
+    </div>
+    <div class="row mt-4" style="font-size: 24px;">
+      <div class="col text-center">Next Draw After</div>
+    </div>
+    <div class="row" style="padding-left:300px; padding-right:300px;">
+      <div class="col" style="font-size: 42px;">{{ days }}<span style="font-size: 16px;">DAYS</span></div>
+      <div class="col" style="font-size: 42px;">{{ hours }}<span style="font-size: 16px;">HOURS</span></div>
+      <div class="col" style="font-size: 42px;">{{ minutes }}<span style="font-size: 16px;">MINUTES</span></div>
+      <div class="col" style="font-size: 42px;">{{ seconds }}<span style="font-size: 16px;">SECONDS</span></div>
+    </div>
+    <div class="row mt-4" style="font-size: 24px;">
+      <div class="col text-center">Current Pot Value</div>
+    </div>
+    <div class="row mt-1 mb-2" style="font-size: 36px;">
+      <div class="col text-center">{{ currentPotAmount }} ether <button type="button" class="btn btn-info" @click="updatePotAmount">Refresh</button></div>
+    </div>
+    <div v-if="isOwner !== null">
+      <div v-if="isOwner">
+        <div>Hi Owner!</div>
+        <div v-if="!pickWinnerDisabled" class="mt-2">Time to pick the next winner</div>
+        <div v-if="pickWinnerDisabled" class="mt-2">Time is still remaining</div>
+        <button type="button" class="btn btn-primary mt-3" :disabled="isLoading" @click="pickWinner">
+          <span v-if="isLoading" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          <span v-else> Pick Winner </span> 
+        </button>
+      </div>
+      <div v-else>
+        <div>Try your luck...</div>
+        <input class="mt-3" type="number" id="lotteryInputAmount" placeholder="Enter Amount (ether)"
+          style="text-align:center;" v-model="inputAmount" :readonly="isLoading">
+        <br>
+        <button type="button" class="btn btn-success mt-3" @click="enterLottery" :disabled="isLoading || inputAmount === null">
+          <span v-if="isLoading" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          <span v-else> Enter Lottery </span> 
+        </button>
+      </div>
+    </div>
+    <div class="row mt-3" style="font-size: 16px;">
+      <div v-if="isLoading" class="col text-center">Transaction Pending...</div>
+      <div v-if="isSuccess" class="col text-center">Transaction Completed. {{ customSuccessMsg }}</div>
+      <div v-if="isError" class="col text-center">Transaction Failed -> <b>{{ errorMsg }} <a v-if="isTransactionError" :href="transactionLink"  target="_blank">here</a> </b></div>
+    </div>
+    <div id="transactionInfo" class="row mt-3" style="font-size: 16px;" v-if="isLoading && !showTransactionInfo" >
+      <div class="col text-center"><b>Please check MetaMask for transaction request!</b></div>
+    </div>
+    <div id="transactionInfo" class="row mt-3" style="font-size: 16px;" v-if="showTransactionInfo">
+      <div class="col text-center">Your Transaction Hash: {{ transactionHash }} (<a :href="transactionLink" target="_blank">Track</a>) </div>
+    </div>
+    <!-- <div class="row mt-4" style="font-size: 16px;">
+      <div class="col text-center">Last Winner: 0x0293FDfd72311166630f71f8b14a20a99C29cAb8</div>
+    </div> -->
+  </div>
+
+  <script type="module">
+    import { address, abi } from './lotteryContract.js'
+    var app = new Vue({
+      el: '#app',
+      data: {
+        web3: null,
+        provider: null,
+        lotteryContract: null,
+        isOwner: null,
+        currentAccount: null,
+        nextDrawDate: new Date(),
+        days: 0,
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+        currentPotAmount: 0,
+        pickWinnerDisabled: true,
+        inputAmount: null,
+        isLoading: false,
+        isSuccess: false,
+        isError: false,
+        errorMsg: "",
+        errorLink: null,
+        transactionHash: "",
+        currentNetwork: "",
+        showTransactionInfo: false,
+        customSuccessMsg: ""
+      },
+      created() {
+        this.init();
+      },
+      methods: {
+        async init() {
+          // Modern dapp browsers...
+          if (window.ethereum) {
+            this.provider = window.ethereum;
+            try {
+              // Request account access if needed
+              await window.ethereum.enable();
+              // Acccounts now exposed
+              // web3.eth.sendTransaction({
+              //   /* ... */ });
+            } catch (error) {
+              console.log(error);
+              // User denied account access...
+            }
+          }
+          // Legacy dapp browsers...
+          else if (window.web3) {
+            this.provider = web3.currentProvider;
+            // Acccounts always exposed
+          }
+          // Non-dapp browsers...
+          else {
+            console.log('Non-Ethereum browser detected. You should consider trying MetaMask!');
+          }
+          if(this.provider) {
+            this.web3 = new Web3(this.provider);
+            this.lotteryContract = new this.web3.eth.Contract(abi, address);  
+            console.log(await this.web3.eth.net.getNetworkType());
+            console.log(await this.web3.eth.net.getId());      
+            if(window.ethereum) {
+              window.ethereum.on('accountsChanged', this.handleAccountsChanged);
+              window.ethereum.on('chainChanged', this.handleChainChanged);
+            }
+            this.currentAccount = await this.web3.eth.getAccounts()[0];
+            await this.checkIsOwner();
+            await this.setNextDrawDate();            
+            const timer = setInterval(() => {
+              // Get today's date and time
+              const now = new Date().getTime();
+
+              // Find the distance between now and the count down date
+              const distance = this.nextDrawDate.getTime() - now;
+
+              // Time calculations for days, hours, minutes and seconds
+              this.days = Math.floor(distance / (1000 * 60 * 60 * 24));
+              this.hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+              this.minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+              this.seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+              if(distance === 0) {
+                this.pickWinnerDisabled = false;
+                clearInterval(timer);
+              }
+            }, 1000);
+            this.updatePotAmount();
+            this.lotteryContract.handleRevert = true;
+
+            //console.log(await this.web3.eth.getAccounts())
+            //console.log(await this.lotteryContract.methods.owner().call());
+            //console.log(await this.lotteryContract.methods.isOwner().call({from: this.web3.currentProvider.selectedAddress}));
+          }
+        },
+        handleAccountsChanged(accounts) {
+          this.resetDataProperties();
+          this.currentAccount = accounts[0];
+          this.checkIsOwner();
+        },
+        handleChainChanged(chainId) {
+          console.log("chain ID changed", chainId);
+          
+        },
+        async checkIsOwner() {
+          let accounts = await this.web3.eth.getAccounts();
+          this.isOwner = await this.lotteryContract.methods.isOwner().call({from: accounts[0]});
+        },
+        async setNextDrawDate() {
+          let timestamp = await this.lotteryContract.methods.previousDrawDate().call();
+          let previousDrawDate = new Date(timestamp*1000);
+          this.nextDrawDate.setDate(previousDrawDate.getDate() + 10);
+          this.nextDrawDate.setHours(22,0,0);          
+        },
+        async updatePotAmount() {
+          this.currentPotAmount = await this.web3.eth.getBalance(address);
+          this.currentPotAmount = this.web3.utils.fromWei(this.currentPotAmount, 'ether');
+        },
+        async enterLottery() {
+          this.resetDataProperties();
+          let accounts = await this.web3.eth.getAccounts();
+          this.isLoading = true;
+          this.isSuccess = false;
+          this.isError = false;          
+          this.lotteryContract.methods.enterLottery().send({
+            from: accounts[0],
+            value: this.web3.utils.toWei(this.inputAmount, 'ether')
+          })
+          .on('transactionHash', async (hash) => {
+            this.transactionHash = hash;
+            let network = await this.web3.eth.net.getNetworkType();
+            if(network === "main") {
+              network = "";
+            } else {
+              network = network + '.';
+            }
+            this.transactionLink = `https://${network}etherscan.io/tx/${hash}`;
+            this.showTransactionInfo = true;
+          })
+          .on('receipt', (receipt) => {
+            this.isLoading = false;
+            this.isSuccess = true;
+            this.isError = false;
+            this.inputAmount = null;
+            this.customSuccessMsg = "You have succesfully entered the lottery. All the very best!";
+            this.updatePotAmount();
+          })
+          .on('error', (error, receipt) => {
+            this.isLoading = false;
+            this.isSuccess = false;
+            this.isError = true;
+            if(error.code){
+              this.errorMsg = error.message;
+            } else {
+              this.isTransactionError = true;
+              this.errorMsg = "Please find more info ";
+            }
+          })
+        },
+        async pickWinner() {
+          this.resetDataProperties();
+          let accounts = await this.web3.eth.getAccounts();
+          this.isLoading = true;
+          this.isSuccess = false;
+          this.isError = false;  
+          this.lotteryContract.methods.pickWinner().send({
+            from: accounts[0]
+          })
+          .on('transactionHash', async (hash) => {
+            this.transactionHash = hash;
+            let network = await this.web3.eth.net.getNetworkType();
+            if(network === "main") {
+              network = "";
+            } else {
+              network = network + '.';
+            }
+            this.transactionLink = `https://${network}etherscan.io/tx/${hash}`;
+            this.showTransactionInfo = true;
+          })
+          .on('receipt', async (receipt) => {
+            this.isLoading = false;
+            this.isSuccess = true;
+            this.isError = false;
+            this.customSuccessMsg = "Winner picked Successfully: " + await this.getPreviousWinner();
+            this.updatePotAmount();
+            this.setNextDrawDate();
+          })
+          .on('error', (error, receipt) => {
+            this.isLoading = false;
+            this.isSuccess = false;
+            this.isError = true;
+            if(error.code){
+              this.errorMsg = error.message;
+            } else {
+              this.isTransactionError = true;
+              this.errorMsg = "Please find more info ";
+            }
+          })
+
+        },
+        resetDataProperties() {
+          this.isSuccess = false;
+          this.isError = false;
+          this.isLoading = false;
+          this.showTransactionInfo = false;
+          this.isTransactionError = false;
+        },
+        async getPreviousWinner() {
+          return await this.lotteryContract.methods.previousWinner().call();
+        }
+      }
+    })
+  </script>
+</body>
+
+</html>
